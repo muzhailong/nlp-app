@@ -25,11 +25,11 @@
 
 
 ## 引用与参考
-[BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding](https://github.com/google-research/bert "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding")
-[Language Models are Unsupervised Multitask Learners](https://d4mucfpksywv.cloudfront.net/better-language-models/language-models.pdf "Language Models are Unsupervised Multitask Learners")
-[transformers](https://github.com/huggingface/transformers "transformers")
-[Morizeyao/GPT2-Chinese](https://github.com/Morizeyao/GPT2-Chinese.git "Morizeyao/GPT2-Chinese")
-[Accurate, Large Minibatch SGD:Training ImageNet in 1 Hour](https://arxiv.org/pdf/1706.02677.pdf "Accurate, Large Minibatch SGD:Training ImageNet in 1 Hour")
-[GPT2-NewsTitle](https://github.com/liucongg/GPT2-NewsTitle "GPT2-NewsTitle")
+1. [BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding](https://github.com/google-research/bert "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding")
+2. [Language Models are Unsupervised Multitask Learners](https://d4mucfpksywv.cloudfront.net/better-language-models/language-models.pdf "Language Models are Unsupervised Multitask Learners")
+3. [transformers](https://github.com/huggingface/transformers "transformers")
+4. [Morizeyao/GPT2-Chinese](https://github.com/Morizeyao/GPT2-Chinese.git "Morizeyao/GPT2-Chinese")
+5. [Accurate, Large Minibatch SGD:Training ImageNet in 1 Hour](https://arxiv.org/pdf/1706.02677.pdf "Accurate, Large Minibatch SGD:Training ImageNet in 1 Hour")
+6. [GPT2-NewsTitle](https://github.com/liucongg/GPT2-NewsTitle "GPT2-NewsTitle")
 
 > 本项目主要用来学习和竞赛使用，有错误的地方，请多多包含
