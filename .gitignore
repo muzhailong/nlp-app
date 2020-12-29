@@ -4,3 +4,6 @@
 *.csv
 *.out
 __pycache__
+/scripts/classfication-log/*
+/scripts/realformer-log/*
+/scripts/log/*

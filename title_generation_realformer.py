@@ -186,7 +186,7 @@ def train(model, loader, sampler):
 
             with torch.no_grad():
                 if hvd.rank() == 0:
-                    tb.add_scalar("Train/loss", loss.item(), global_step=all_steps)
+                    tb.add_scalar(f"{args.task_name}:Train/loss", loss.item(), global_step=all_steps)
                     print(f"epochs:{args.epochs}/{e},steps:{all_steps},loss:{loss.item()}", flush=True)
             if hvd.rank() == 0 and all_steps % args.save_steps == 0:
                 torch.save(model.state_dict(), args.model_save_path)
@@ -211,7 +211,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--device', default='cuda')
     parser.add_argument("--train_df_path", type=str)
-    parser.add_argument("--logdir", type=str, default="./realformer-log")
+    parser.add_argument("--logdir", type=str, default="./log")
+    parser.add_argument("--task_name", type=str, default="realformer")
     parser.add_argument("--model_save_path", type=str)
     parser.add_argument("--optim_save_path", type=str)
     parser.add_argument("--predict_save_path", type=str, default='./predict_result.csv')

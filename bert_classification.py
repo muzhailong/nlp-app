@@ -171,7 +171,7 @@ def train(model, train_loader, train_sampler):
             all_steps += 1
             with torch.no_grad():
                 if hvd.rank() == 0:
-                    tb.add_scalar("Train/loss", loss.item(), global_step=all_steps)
+                    tb.add_scalar(f"{args.task_name}:Train/loss", loss.item(), global_step=all_steps)
                     print(f"epochs:{args.epochs}/{e},steps:{step},loss:{loss.item()}", flush=True)
         if hvd.rank() == 0:
             torch.save(model.state_dict(), args.model_save_path)
@@ -250,7 +250,8 @@ if __name__ == '__main__':
     parser.add_argument("--train_df_path", type=str)
     parser.add_argument("--eval_df_path", type=str)
     parser.add_argument("--predict_df_path", type=str)
-    parser.add_argument("--logdir", type=str, default="./classfication-log")
+    parser.add_argument("--logdir", type=str, default="./log")
+    parser.add_argument("--task_name", type=str, default="tnews-classfication")
 
     parser.add_argument("--model_save_path", type=str)
     parser.add_argument("--optim_save_path", type=str)
