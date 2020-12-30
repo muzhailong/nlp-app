@@ -21,6 +21,7 @@ from transformers.models.bert.modeling_bert import BertEncoder, BertPooler
 from copy import deepcopy
 import horovod.torch as hvd
 from torch.utils.tensorboard import SummaryWriter
+from models.classification import NLPClassification
 
 args = None
 optim = None
@@ -96,46 +97,6 @@ def get_dataloader(df, tokenizer, is_training=True):
         dt, num_replicas=hvd.size(), rank=hvd.rank())
     params['sampler'] = sampler
     return torch.utils.data.DataLoader(dt, **params), sampler
-
-
-# In[3]:
-class NLPClassification(torch.nn.Module):
-    def __init__(self):
-        super(NLPClassification, self).__init__()
-        self.base_model = BertModel.from_pretrained(args.base_model)
-        self.classifier = torch.nn.Linear(self.base_model.config.hidden_size, args.num_labels)
-        self.dropout = torch.nn.Dropout(0.2)
-
-    def forward(self,
-                input_ids=None,
-                attention_mask=None,
-                token_type_ids=None,
-                position_ids=None,
-                head_mask=None,
-                inputs_embeds=None,
-                labels=None,
-                output_attentions=None,
-                output_hidden_states=None,
-                return_dict=None,
-                ):
-        outputs = self.base_model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-        h = self.dropout(outputs.pooler_output)
-        logits = self.classifier(h)
-        if labels is None:
-            return logits
-        loss_fct = CrossEntropyLoss()
-        loss = loss_fct(logits.view(-1, args.num_labels), labels.view(-1))
-        return loss
 
 
 def train(model, train_loader, train_sampler):
@@ -283,7 +244,7 @@ if __name__ == '__main__':
 
     print(args)
 
-    model = NLPClassification().to(args.device)
+    model = NLPClassification(**args).to(args.device)
     # model = torch.nn.DataParallel(model).to(args.device)
 
     tokenizer = BertTokenizer.from_pretrained(args.tokenizer_model)

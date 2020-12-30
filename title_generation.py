@@ -1,5 +1,3 @@
-#!/bin/bash
-
 import os
 import pandas as pd
 import numpy as np
@@ -22,6 +20,8 @@ from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import os
 import horovod.torch as hvd
+from utils import checkpointer
+from models.generater import ConditionalGenerationModel
 
 args = None
 optim = None
@@ -50,7 +50,7 @@ class ConditionalDataset(Dataset):
         lt1 = lt1[:max_len1] if len(lt1) > max_len1 else lt1 + [args.tokenizer.pad_token_id] * (max_len1 - len(lt1))
         ret = {
             "input_ids": torch.tensor([args.tokenizer.cls_token_id, ] + lt1 + [
-                args.tokenizer.convert_tokens_to_ids("<INFER>")] + lt2),
+                args.tokenizer.convert_tokens_to_ids("[GENERATE_TITLE]")] + lt2),
             "labels": torch.tensor([args.tokenizer.pad_token_id] * (2 + len(lt1)) + lt2)
         }
         return ret
@@ -86,80 +86,21 @@ def gradual_decay(epoch, steps, all_steps):
         param_group['lr'] = args.base_lr * hvd.size() * args.batches_per_allreduce * lr_adj
 
 
-class ConditionalGenerationModel(nn.Module):
-    def __init__(self):
-        super(ConditionalGenerationModel, self).__init__()
-        if args.base_model.endswith(".json"):
-            # 使用config
-            model_config = GPT2Config.from_json_file(args.base_model)
-            self.base_model = GPT2LMHeadModel(config=model_config)
-        else:
-            # 载预训练模型
-            self.base_model = GPT2LMHeadModel.from_pretrained(args.base_model)
-        self.base_model.resize_token_embeddings(len(args.tokenizer))
-        self.config = self.base_model.config
-
-    def forward(
-            self,
-            input_ids=None,
-            past_key_values=None,
-            attention_mask=None,
-            token_type_ids=None,
-            position_ids=None,
-            head_mask=None,
-            inputs_embeds=None,
-            encoder_hidden_states=None,
-            encoder_attention_mask=None,
-            labels=None,
-            use_cache=None,
-            output_attentions=None,
-            output_hidden_states=None,
-    ):
-        r"""
-        labels 其中为title部分为token的id 其他部分为0 计算loss时可以使用ignore_index 忽略掉
-        """
-        output = self.base_model(
-            input_ids=input_ids,
-            past_key_values=past_key_values,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_attention_mask,
-            labels=None,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=True,
-        )
-        lm_logits = output.logits
-        if labels is None:
-            return lm_logits
-
-        shift_logits = lm_logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
-        loss_fct = CrossEntropyLoss(reduction='sum', ignore_index=args.tokenizer.pad_token_id)  # [PAD]=0
-        loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-        num = shift_labels.ne(0).long().sum().item()
-        loss = loss / num
-        return loss
-
-
 def train(model, loader, sampler):
-    if os.path.isfile(args.model_save_path):
-        model.load_state_dict(torch.load(args.model_save_path))
-    if os.path.isfile(args.optim_save_path):
-        optim.load_state_dict(torch.load(args.optim_save_path))
-
-    model.train()
     device = args.device
     all_steps = 0
-    for e in range(args.epochs):
+    epoch = -1
+    if os.path.isfile(args.checkpoint_save_path):
+        mp = checkpointer.load(args.checkpoint_save_path, return_dict=True)
+        model.load_state_dict(mp['model_state'])
+        optim.load_state_dict(mp['optim_state'])
+        all_steps = mp['all_steps']
+        epoch = mp['epoch']
+    model.train()
+    optim.zero_grad()
+    scaler = GradScaler()
+    for e in range(epoch + 1, args.epochs):
         sampler.set_epoch(e)
-        optim.zero_grad()
-
         gradual_decay(epoch=e, steps=0, all_steps=len(loader))
         for step, data in enumerate(loader, start=1):
             input_ids = data['input_ids'].to(device)
@@ -170,28 +111,24 @@ def train(model, loader, sampler):
             )
             loss.div_(args.batches_per_allreduce)
             loss.backward()
-            # 梯度裁剪
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+
             if step % args.batches_per_allreduce != 0:
                 continue
+            # 梯度裁剪
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             optim.step()
             optim.zero_grad()
             all_steps += 1
-            gradual_decay(epoch=e, steps=all_steps, all_steps=len(loader))
+            gradual_decay(epoch=e, steps=all_steps % len(loader), all_steps=len(loader))
 
             with torch.no_grad():
                 if hvd.rank() == 0:
                     tb.add_scalar(f"{args.task_name}:", loss.item(), global_step=all_steps)
                     print(f"epochs:{args.epochs}/{e},steps:{all_steps},loss:{loss.item()}", flush=True)
             if hvd.rank() == 0 and all_steps % args.save_steps == 0:
-                torch.save(model.state_dict(), args.model_save_path)
-                torch.save(optim.state_dict(), args.optim_save_path)
-
-
-def generate(model, loader):
-    model.load_state_dict(torch.load(args.model_save_path))
-    model.eval()
-    device = args.device
+                checkpointer.save(args.checkpoint_save_path, model.state_dict(), optim.state_dict(), e, all_steps)
+    if hvd.rank() == 0:
+        checkpointer.save(args.checkpoint_save_path, model.state_dict(), optim.state_dict(), e, all_steps)
 
 
 if __name__ == '__main__':
@@ -201,22 +138,20 @@ if __name__ == '__main__':
     parser.add_argument('--base_lr', default=4e-4, type=float)
 
     parser.add_argument('--max_len', default=512)
-    parser.add_argument('--do_train', default=1, type=int)
-    parser.add_argument('--do_predict', default=1, type=int)
+    parser.add_argument('--do_train', action='store_true', default=False)
+    parser.add_argument('--do_predict', action='store_true', default=False)
 
     parser.add_argument('--device', default='cuda')
     parser.add_argument("--train_df_path", type=str)
     parser.add_argument("--logdir", type=str, default="./log")
     parser.add_argument("--task_name", type=str, default="title_generate")
-    parser.add_argument("--model_save_path", type=str)
-    parser.add_argument("--optim_save_path", type=str)
-    parser.add_argument("--predict_save_path", type=str, default='./predict_result.csv')
+    parser.add_argument("--checkpoint_save_path", type=str, help='model optim epoch all_step save')
 
     parser.add_argument('--base_model', default='hfl/chinese-macbert-large')
     parser.add_argument('--tokenizer_model', default='bert-base-chinese', type=str)
 
     parser.add_argument('--epochs', default=10, type=int)
-    parser.add_argument('--save_steps', default=100, type=int)
+    parser.add_argument('--save_steps', default=1000, type=int)
 
     parser.add_argument('--warmup-epochs', type=float, default=2,
                         help='number of warmup epochs')
@@ -249,7 +184,8 @@ if __name__ == '__main__':
         torch.cuda.set_device(hvd.local_rank())
 
     tokenizer = BertTokenizer.from_pretrained(args.tokenizer_model)
-    tokenizer.add_tokens("<INFER>")
+    tokenizer.add_tokens("[GENERATE_TITLE]")
+
     args.tokenizer = tokenizer
     args.rank_size = hvd.size()
     print(args)
@@ -257,7 +193,7 @@ if __name__ == '__main__':
     train_df = pd.read_csv(args.train_df_path)
     train_loader, train_sampler = get_dataLoader(train_df)
 
-    model = ConditionalGenerationModel().to(args.device)
+    model = ConditionalGenerationModel(**args).to(args.device)
     #     model=torch.nn.DataParallel(model).to(args.device)#并行程序会卡住，不晓得为什么
     compression = hvd.Compression.fp16 if args.compression_fp16 else hvd.Compression.none
     optim = torch.optim.SGD(
